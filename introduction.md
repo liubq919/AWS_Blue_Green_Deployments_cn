@@ -161,4 +161,234 @@ AWS OpsWorks具有堆栈概念，这些堆栈是AWS资源（EC2实例，Amazon R
 图14 退役蓝色堆栈
 
 
-## 管理数据同步和模式更改的最佳实践
+## 数据同步管理和schema更改的最佳实践
+
+跨两个不同环境管理数据同步可能很复杂，具体取决于所使用的数据存储的数量，数据模型的复杂性以及数据一致性要求。
+
+蓝色和绿色环境都需要最新数据：
+- 绿色环境需要最新的数据访问，因为它正在成为新的生产环境
+- 在回滚的情况下，蓝色环境需要最新的数据，此时生产要么被回滚，要么保持在蓝色环境中。
+
+从广义上讲，可以通过让绿色和蓝色环境共享相同的数据存储来实现此目的。非结构化数据存储，通常更容易在两个环境之间共享，比如Amazon Simple Storage Service（Amazon S3）对象存储，NoSQL数据库和共享文件系统。结构化数据存储，例如关系数据库管理系统（RDBMS），其中数据schema可能在不同的环境中出现差异，通常需要额外的考虑因素。
+
+### 解耦schema更改与代码更改
+
+一般建议是将schema更改与代码更改分离。这样，关系数据库位于为蓝/绿部署定义的环境边界之外，并在蓝色和绿色环境之间共享。执行schema更改的两种方法经常同时使用。
+- 在蓝/绿代码部署之前，先修改schema。数据库更新必须向后兼容，因此旧版本的应用仍然可以与数据进行交互
+- 在蓝/绿代码部署之后，最后修改schema。新版本应用中的代码更改必须向后兼容旧版本schema
+
+前一种schema修改方案通常是附加法。在表中添加新字段，添加新实体和关系。如果需要，可以使用触发器或异步流程，基于旧应用版本所执行的数据更改，用数据填充这些新构造。
+在开发应用程序时，需要遵循编码最佳实践，以确保应用可以容忍当前表中存在其它字段，即使它们未被使用。当读取表行值并将其映射到源代码结构（对象，数组哈希等）时，代码应忽略无法映射的字段，而不是导致应用程序运行时错误。
+
+前一种schema修改方案通常是删除法。删除不需要的字段，实体和关系，或合并和联合它们。到目前为止，旧版本应用已不再可用。
+
+![15](Figure15.jpg)
+
+以这种方式管理schema更改会增加风险：schema修改过程中的失败会影响生产环境。由于没有遵循最佳实践或新应用程序版本仍然依赖于代码中某个已删除字段的无文档化问题，添加的更改可能会导致旧应用程序崩溃。为了适当降低风险，此模式非常强调预部署软件生命周期步骤。确保拥有强大的测试阶段和框架以及强大的QA阶段。在推出生产之前，在测试环境中执行部署有助于尽早识别这些问题。
+
+## 何时不推荐蓝/绿部署
+
+随着蓝/绿部署越来越流行，开发人员和公司不断地将这种方法应用到新的和创新的用例中。然而，有一些常见的用例模式不推荐应用这种方法(即使可能)。
+
+在这些情况下，实施蓝/绿部署会带来太多风险，无论是由于解决方法还是部署过程中的其他“移动部件”。这些复杂性可能会引入额外的故障点，或流程崩溃的机会，这可能会抵消蓝/绿部署带来的任何风险缓解好处。
+
+以下高亮模式可能不适合蓝/绿部署。
+
+#### schema是否变得太复杂而无法与代码更改分离？数据存储的共享是否不可行？
+
+在某些情况下，共享数据存储并不被期望或者可行。schema更改非常复杂以至于无法解耦。当蓝色和绿色环境位于地理上不同区域时，数据位置会给应用程序带来太多的性能下降。当数据存储位于部署环境边界内，并分别与蓝色和绿色应用程序紧密耦合时，所有这些情况都需要解决方案，
+
+这需要数据修改能够同步-从蓝色环境到绿色环境，反之亦然。实现此目的的系统和流程通常很复杂，并且受到应用数据一致性要求的限制。这意味着在部署期间，还必须管理同步工作负载的可靠性，可伸缩性和性能，从而增加部署风险。
+
+### 应用需要具有“部署感知”吗？
+在蓝/绿部署期间，必须使用特征标志来控制应用程序的行为。这通常是与无法有效地分离schema和代码更改而相结合的原因。应用代码将在部署期间执行其他或备用子程序，以保持数据同步或执行其他与部署相关的任务。在部署期间，通过使用标志配置，可以启用和关闭这些子程序（视情况而定）。
+
+此做法还会带来额外的风险和复杂性，通常不建议使用蓝/绿部署。蓝/绿部署的目标是实现不可变的基础架构，在部署后不会对应用进行更改，而是完全重新部署。这样，可以确保在生产设置和部署设置中运行相同的代码，从而降低整体风险因素。
+
+### 你的商用现货(COTS)应用程序是否带有一个预定义的更新/升级过程，该过程对蓝/绿部署并不友好？
+
+许多商业软件供应商为他们已经过测试和验证的应用程序提供了自己的更新和升级过程。虽然供应商越来越多地采用不可变基础架构和自动部署的原则，但并非所有软件产品都具备这些功能。
+
+围绕供应商推荐的更新和部署实践来实现或模拟蓝/绿部署过程也可能带来不必要的风险，可能会抵消这种方法的好处。
+
+## 总结
+
+应用部署具有关联风险。但云计算，部署和自动化框架以及蓝/绿等新部署技术的出现有助于降低风险，例如人为错误，流程，停机时间和回滚功能。AWS实用的帐单模型和广泛的自动化工具使客户能够更易于快速，经济高效地实施大规模的蓝/绿部署。
+
+## 贡献者
+以下个人和组织为本文件做出了贡献：
+- George John，AWS解决方案架构师
+- Andy Mui, AWS解决方案架构师
+- Vlad Vlasceanu，AWS解决方案架构师
+
+## 附录
+### 蓝/绿部署方案对比
+下表提供了本文中讨论的不同蓝/绿部署技术的概述和比较。潜在风险从理想的低风险（![circle](black_circle.png)）到不太理想的高风险（![circle](black_circle.png) ![circle](black_circle.png) ![circle](black_circle.png)）进行评估。
+
+<table>
+    <thead>
+        <tr>
+            <th rowspan="3">方案</th>
+            <th>风险类别</th>
+            <th>潜在风险</th>
+            <th>说明</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td rowspan="6">使用Amazon Route 53更新DNS路由</td>
+            <td>应用问题</td>
+            <td><img src="black_circle.png"/></td>
+            <td>促进金丝雀分析</td>
+        </tr>
+        <tr>
+            <td>应用性能</td>
+            <td><img src="black_circle.png"/></td>
+            <td>逐步切换，流量分流管理</td>
+        </tr>
+        <tr>
+            <td>人为/流程错误</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>依赖于自动化框架，整体流程简单</td>
+        </tr>
+        <tr>
+            <td>基础设施故障</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>依赖于自动化框架</td>
+        </tr>
+        <tr>
+            <td>回滚</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>DNS TTL复杂性（反应时间，flip/flop）</td>
+        </tr>
+        <tr>
+            <td>成本</td>
+            <td><img src="black_circle.png"></td>
+            <td>通过Auto Scaling优化</td>
+        </tr>
+        <tr>
+            <td rowspan="6">在弹性负载均衡器下游交换Auto Scaling组</td>
+            <td>应用问题</td>
+            <td><img src="black_circle.png"/></td>
+            <td>促进金丝雀分析</td>
+        </tr>
+        <tr>
+            <td>应用性能</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>较低细粒度流量分割管理，已预热的负载均衡器</td>
+        </tr>
+        <tr>
+            <td>人为/流程错误</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>依赖于自动化框架</td>
+        </tr>
+        <tr>
+            <td>基础设施故障</td>
+            <td><img src="black_circle.png"/></td>
+            <td>Auto Scaling</td>
+        </tr>
+        <tr>
+            <td>回滚</td>
+            <td><img src="black_circle.png"/></td>
+            <td>没有DNS的复杂性</td>
+        </tr>
+        <tr>
+            <td>成本</td>
+            <td><img src="black_circle.png"></td>
+            <td>通过Auto Scaling优化</td>
+        </tr>
+        <tr>
+            <td rowspan="6">更新Auto Scaling组启动配置</td>
+            <td>应用问题</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>在不均匀设备中的错误/问题检查比较复杂</td>
+        </tr>
+        <tr>
+            <td>应用性能</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>较低细粒度流量分割管理，初始流量负载</td>
+        </tr>
+        <tr>
+            <td>人为/流程错误</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>依赖于自动化框架</td>
+        </tr>
+        <tr>
+            <td>基础设施故障</td>
+            <td><img src="black_circle.png"/></td>
+            <td>Auto Scaling</td>
+        </tr>
+        <tr>
+            <td>回滚</td>
+            <td><img src="black_circle.png"/></td>
+            <td>没有DNS的复杂性</td>
+        </tr>
+        <tr>
+            <td>成本</td>
+            <td><img src="black_circle.png"> <img src="black_circle.png"/></td>
+            <td>通过Auto Scaling进行优化，但初始扩展超出需求</td>
+        </tr>
+        <tr>
+            <td rowspan="6">交换Elastic Beanstalk应用环境</td>
+            <td>应用问题</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/> </td>
+            <td>能够在切换之前进行金丝雀分析，但不能用于生产流量</td>
+        </tr>
+        <tr>
+            <td>应用性能</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>完整切换</td>
+        </tr>
+        <tr>
+            <td>人为/流程错误</td>
+            <td><img src="black_circle.png"/></td>
+            <td>流程简单，自动化</td>
+        </tr>
+        <tr>
+            <td>基础设施故障</td>
+            <td><img src="black_circle.png"/></td>
+            <td>Auto Scaling, CloudWatch monitoring, Elastic Beanstalk健康报告</td>
+        </tr>
+        <tr>
+            <td>回滚</td>
+            <td><img src="black_circle.png"/> <img src="black_circle.png"/> <img src="black_circle.png"/></td>
+            <td>DNS TTL复杂性</td>
+        </tr>
+        <tr>
+            <td>成本</td>
+            <td><img src="black_circle.png"> <img src="black_circle.png"/></td>
+            <td>通过Auto Scaling进行优化，但初始扩展超出需求</td>
+        </tr>
+        <tr>
+            <td rowspan="6">在AWS OpsWorks中克隆堆栈并更新DNS</td>
+            <td>应用问题</td>
+            <td><img src="black_circle.png"/></td>
+            <td>促进金丝雀分析</td>
+        </tr>
+        <tr>
+            <td>应用性能</td>
+            <td><img src="black_circle.png"/></td>
+            <td>逐步切换，流量分流管理</td>
+        </tr>
+        <tr>
+            <td>人为/流程错误</td>
+            <td><img src="black_circle.png"></td>
+            <td>高度自动化</td>
+        </tr>
+        <tr>
+            <td>基础设施故障</td>
+            <td><img src="black_circle.png"></td>
+            <td>Auto-healing（自愈）能力</td>
+        </tr>
+        <tr>
+            <td>回滚</td>
+            <td><img src="black_circle.png"> <img src="black_circle.png"> <img src="black_circle.png"></td>
+            <td>DNS TTL复杂性</td>
+        </tr>
+        <tr>
+            <td>成本</td>
+            <td><img src="black_circle.png"> <img src="black_circle.png"> <img src="black_circle.png"></td>
+            <td>双重资源栈</td>
+        </tr>
+    </tbody>
+</table>
