@@ -1,5 +1,13 @@
 # AWS的蓝/绿部署
 
+<p align="center">
+   <img width="400" src="images/cover.png">
+</p>
+
+## 原文
+- [pdf](AWS_Blue_Green_Deployments.pdf)  
+- [word](AWS_Blue_Green_Deployments.doc)
+
 ## 目录
 - [摘要](abstract.md)
 - [介绍](introduction.md)
