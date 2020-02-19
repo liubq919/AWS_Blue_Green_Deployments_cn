@@ -1,4 +1,4 @@
-# AWS的蓝/绿部署
+# 在AWS中实现蓝/绿部署
 
 <p align="center">
    <img width="400" src="images/cover.png">
